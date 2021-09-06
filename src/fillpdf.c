@@ -1,77 +1,147 @@
-// Copyright 2021 John B Roark. All rights reserved.
-// Use of this source code is governed by an MIT-style
-// license that can be found in the LICENSE file.
+/*
+cfillpdf
+Copyright (C) 2021 John B Roark
 
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
 #include "../include/fillpdf.h"
 
+const char * pdf_err_str(int err_enum) {
+    pdf_err err = (pdf_err) err_enum;
+    switch (err) {
+    case TemplateFilenameEmpty:
+        return "input template filename is empty";
+
+    case TemplateFilenameNotURI:
+        return "filename is not a valid format (cannot convert to URI)";
+
+    case TemplateInvalid:
+        return "template cannot be opened";
+
+    case TemplateEmpty:
+        return "template has no pages";
+
+    case TemplateNoFields:
+        return "template has no fields";
+
+    case TemplateNotExist:
+        return "template file does not exist";
+
+    case NoFields:
+        return "json string for field filling is empty";
+
+    default:
+        return "unkown error";
+    }
+}
+
 int pdf_open(
-        const char *in_filename,
-        const char *fields,
-        struct fillpdf *out,
-        struct autobuffer *buf
-)   {
+    const char * in_filename,
+    struct fillpdf * out,
+    struct autobuffer * buf
+) {
     // input strings from the FFI might be volatile, its best we copy them to the heap
     unsigned len = strlen(in_filename);
-    if (len == 0) { return 1; }
+    if (len == 0) {
+        return TemplateFilenameEmpty;
+    }
 
-    out->in_filename = (char *) malloc(len + 1);
-    strcpy(out->in_filename, in_filename);
+    out -> in_filename = (char * ) malloc(len + 1);
+    strcpy(out -> in_filename, in_filename);
 
     // open the template PDF
-    GError *err = NULL; // <- must be initialized as NULL for some reason
 
-    gchar *uri = g_filename_to_uri(in_filename, NULL, &err);
+    // does the template pdf file exist?
+    if (!access(out -> in_filename, F_OK) == 0) {
+        return TemplateNotExist;
+    }
+
+    GError * err = NULL; // <- must be initialized as NULL for some reason
+
+    gchar * uri = g_filename_to_uri(in_filename, NULL, & err);
     if (uri == NULL) {
         g_free(uri);
-        return 1;
+        return TemplateFilenameNotURI;
     }
 
-    out->template = poppler_document_new_from_file(uri, NULL, &err);
+    if (err != NULL) {
+        g_clear_error( & err);
+        return TemplateInvalid;
+    }
+
+    out -> template = poppler_document_new_from_file(uri, NULL, & err);
     g_free(uri);
-    if (out->template == NULL) {
-        return 1;
+    if (out -> template == NULL) {
+        return TemplateInvalid;
     }
 
-    // initialize the json object parser
-    if (strlen(fields) == 0) {
-        return 1;
+    if (err != NULL) {
+        g_clear_error( & err);
+        return TemplateInvalid;
     }
 
-    out->fields = json_tokener_parse(fields);
-    out->buf    = buf;
+    out -> buf = buf;
 
     return 0;
 }
 
-int fill_template_text(struct fillpdf *fillablepdf) {
-    int n = poppler_document_get_n_pages(fillablepdf->template);
-    if (n == 0) { return 1; }
+int pdf_set_fields(struct fillpdf * fillablepdf, const char *fields) {
+    // input strings from the FFI might be volatile, its best we copy them to the heap
+    unsigned len = strlen(fields);
+    if (len == 0) {
+        return NoFields;
+    }
 
-    GList *pdf_fields;
-    struct json_object *obj;
+    fillablepdf -> fields_raw = (char * ) malloc(len + 1);
+    strcpy(fillablepdf -> fields_raw, fields);
+
+    fillablepdf -> fields = json_tokener_parse(fillablepdf -> fields_raw);
+}
+
+int pdf_fill_template_fields(struct fillpdf * fillablepdf) {
+    int n = poppler_document_get_n_pages(fillablepdf -> template);
+    if (n == 0) {
+        return TemplateEmpty;
+    }
+
+    GList * pdf_fields;
+    struct json_object * obj;
     int n_maps = 0;
 
     for (int i = 0; i < n; i += 1) {
-        PopplerPage *page = poppler_document_get_page(fillablepdf->template, i);
+        PopplerPage * page = poppler_document_get_page(fillablepdf -> template, i);
         pdf_fields = poppler_page_get_form_field_mapping(page);
 
-        PopplerFormFieldMapping *fieldmap;
+        PopplerFormFieldMapping * fieldmap;
         n_maps = g_list_length(pdf_fields);
 
         for (int idx = 0; i < n_maps; i += 1) {
             fieldmap = g_list_nth_data(pdf_fields, i);
             if (fieldmap == NULL) {
-                return 1;
+                return TemplateNoFields;
             }
-            gchar *field_name = poppler_form_field_get_name(fieldmap->field);
+            gchar * field_name = poppler_form_field_get_name(fieldmap -> field);
 
-            if (!json_object_object_get_ex(fillablepdf->fields, field_name, &obj)) {
+            if (!json_object_object_get_ex(fillablepdf -> fields, field_name, & obj)) {
                 continue; // no json object exists for this field
             }
 
+            char * txt = (char * ) json_object_to_json_string(obj);
+            pdf_unescape_json_str(txt);
             poppler_form_field_text_set_text(
-                fieldmap->field,
-                json_object_to_json_string(obj)
+                fieldmap -> field,
+                txt
             );
 
             obj = NULL;
@@ -84,75 +154,81 @@ int fill_template_text(struct fillpdf *fillablepdf) {
     return 0;
 }
 
-void pdf_new_buffer(struct autobuffer *buf) {
-    buf->data=NULL;
-    buf->size=0;
-    buf->available=0;
-    buf->_next_allocation_size = 5000;
+void pdf_new_buffer(struct autobuffer * buf) {
+    buf -> data = NULL;
+    buf -> size = 0;
+    buf -> available = 0;
+    buf -> _next_allocation_size = 5000;
 }
 
-void pdf_free_buffer(struct autobuffer *buf) {
-    free(buf->data);
+void pdf_free_buffer(struct autobuffer * buf) {
+    free(buf -> data);
     buf = NULL;
 }
 
-cairo_status_t pdf_write(void *b, unsigned char const *data, unsigned int len) {
-    struct autobuffer* buf = b;
-    size_t realloc_size = buf->size+len;
+void pdf_clear(struct fillpdf * fillablepdf) {} // TODO
 
-    if(buf->available < realloc_size) {
-        while(buf->available <= realloc_size) {
-            buf->data = realloc(
-                buf->data,
-                buf->available + buf->_next_allocation_size
+unsigned char * pdf_get_buffer(struct autobuffer * buf) {
+    return buf -> data;
+}
+
+cairo_status_t pdf_write(void * b, unsigned char
+    const * data, unsigned int len) {
+    struct autobuffer * buf = b;
+    size_t realloc_size = buf -> size + len;
+
+    if (buf -> available < realloc_size) {
+        while (buf -> available <= realloc_size) {
+            buf -> data = realloc(
+                buf -> data,
+                buf -> available + buf -> _next_allocation_size
             );
-            buf->available += buf->_next_allocation_size;
-            buf->_next_allocation_size *= 2;
+            buf -> available += buf -> _next_allocation_size;
+            buf -> _next_allocation_size *= 2;
         }
     }
 
-    memcpy(&(buf->data[buf->size]), data, len);
-    buf->size += len;
+    memcpy( & (buf -> data[buf -> size]), data, len);
+    buf -> size += len;
 
     return CAIRO_STATUS_SUCCESS;
 }
 
-int pdf_render(struct fillpdf *in) {
-    PopplerPage *page;
-    GError *err = NULL; // <- must be initialized as NULL for some reason
+int pdf_render(struct fillpdf * in ) {
+    PopplerPage * page;
+    GError * err = NULL; // <- must be initialized as NULL for some reason
     cairo_status_t status;
     double width, height;
 
-    page = poppler_document_get_page(in->template, 0);
+    page = poppler_document_get_page( in -> template, 0);
     if (page == NULL) {
-        return 1;
+        return TemplateEmpty;
     }
 
-    poppler_page_get_size(page, &width, &height);
+    poppler_page_get_size(page, & width, & height);
 
-    cairo_surface_t *pdf_surf = cairo_pdf_surface_create_for_stream(
-        pdf_write,
-        in->buf,
+    cairo_surface_t * pdf_surf = cairo_pdf_surface_create_for_stream(
+        pdf_write, in -> buf,
         width,
         height
     );
 
-    cairo_t *context = cairo_create(pdf_surf);
+    cairo_t * context = cairo_create(pdf_surf);
     poppler_page_render_for_printing(page, context);
     cairo_surface_show_page(pdf_surf);
     g_object_unref(page);
 
     status = cairo_status(context);
-    if (status) {
-        printf("%s\n", cairo_status_to_string (status));
+    if (status && status != CAIRO_STATUS_SUCCESS) {
+        return status;
     }
 
     cairo_destroy(context);
     cairo_surface_finish(pdf_surf);
 
     status = cairo_surface_status(pdf_surf);
-    if (status) {
-        printf("%s\n", cairo_status_to_string (status));
+    if (status && status != CAIRO_STATUS_SUCCESS) {
+        return status;
     }
 
     cairo_surface_destroy(pdf_surf);
@@ -160,10 +236,33 @@ int pdf_render(struct fillpdf *in) {
     return 0;
 }
 
-void pdf_close(struct fillpdf *data) {
-    free(data->in_filename);
-    free(data->fields);
-    g_object_unref(data->template);
-    pdf_free_buffer(data->buf);
+void pdf_close(struct fillpdf * data) {
+    free(data -> in_filename);
+    free(data -> fields);
+    free(data -> fields_raw);
+    g_object_unref(data -> template);
+    pdf_free_buffer(data -> buf);
     data = NULL;
+}
+
+void pdf_unescape_json_str(char * obj) {
+    char * tmp;
+    int i;
+    int last_bckslsh = 0;
+    unsigned len = strlen(obj);
+
+    for (i = 0; i < len; i++) {
+        switch (obj[i]) {
+        case '\n' | '\"':
+            memmove(obj + i, obj + i + 1, len - i);
+        case '\\':
+            obj[i] = '\\';
+            last_bckslsh = i;
+        case '/':
+            // remove escaped forward slashes: "\/"
+            if (last_bckslsh == i - 1) {
+                memmove(obj + i + 1, obj + i + 2, len - i + 1);
+            }
+        }
+    }
 }
