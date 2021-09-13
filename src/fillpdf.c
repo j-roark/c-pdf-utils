@@ -38,6 +38,9 @@ const char * pdf_err_str(int err_enum) {
     case TemplateNotExist:
         return "template file does not exist";
 
+    case TemplatePageNotExist:
+        return "page does not exist for this template";
+
     case NoFields:
         return "json string for field filling is empty";
 
@@ -103,14 +106,16 @@ int pdf_set_fields(struct fillpdf * fillablepdf, const char *fields) {
         return NoFields;
     }
 
-    fillablepdf -> fields_raw = (char * ) malloc(len + 1);
+    fillablepdf -> fields_raw = (char *) malloc(len + 1);
     strcpy(fillablepdf -> fields_raw, fields);
 
     fillablepdf -> fields = json_tokener_parse(fillablepdf -> fields_raw);
+
+    return 0;
 }
 
 int pdf_fill_template_fields(struct fillpdf * fillablepdf) {
-    int n = poppler_document_get_n_pages(fillablepdf -> template);
+    int n = pdf_get_pages(fillablepdf);
     if (n == 0) {
         return TemplateEmpty;
     }
@@ -119,7 +124,7 @@ int pdf_fill_template_fields(struct fillpdf * fillablepdf) {
     struct json_object * obj;
     int n_maps = 0;
 
-    for (int i = 0; i < n; i += 1) {
+    for (int i = 0; i <= n; i += 1) {
         PopplerPage * page = poppler_document_get_page(fillablepdf -> template, i);
         pdf_fields = poppler_page_get_form_field_mapping(page);
 
@@ -194,15 +199,15 @@ cairo_status_t pdf_write(void * b, unsigned char
     return CAIRO_STATUS_SUCCESS;
 }
 
-int pdf_render(struct fillpdf * in ) {
+int pdf_render_page(struct fillpdf * in, int p) {
     PopplerPage * page;
     GError * err = NULL; // <- must be initialized as NULL for some reason
     cairo_status_t status;
     double width, height;
 
-    page = poppler_document_get_page( in -> template, 0);
+    page = poppler_document_get_page( in -> template, p);
     if (page == NULL) {
-        return TemplateEmpty;
+        return TemplatePageNotExist;
     }
 
     poppler_page_get_size(page, & width, & height);
@@ -236,6 +241,10 @@ int pdf_render(struct fillpdf * in ) {
     return 0;
 }
 
+int pdf_get_pages(struct fillpdf * in) {
+    return poppler_document_get_n_pages(in -> template);
+}
+
 void pdf_close(struct fillpdf * data) {
     free(data -> in_filename);
     free(data -> fields);
@@ -249,20 +258,31 @@ void pdf_unescape_json_str(char * obj) {
     char * tmp;
     int i;
     int last_bckslsh = 0;
-    unsigned len = strlen(obj);
+    unsigned len = strlen(obj) + 1;
+
+    // remove first "
+    if (obj[0] == 34) {
+        strcpy(&obj[0], &obj[1]);
+        len--;
+    }
+
+    // remove second ""
+    if (obj[len - 2] == 34) {
+        strcpy(&obj[len - 2], &obj[len - 1]);
+    }
 
     for (i = 0; i < len; i++) {
         switch (obj[i]) {
-        case '\n' | '\"':
-            memmove(obj + i, obj + i + 1, len - i);
-        case '\\':
-            obj[i] = '\\';
-            last_bckslsh = i;
-        case '/':
+        case 0:
+            return;
+        case 47 | '/':
             // remove escaped forward slashes: "\/"
+            // json-c is escaping these for some reason :(
             if (last_bckslsh == i - 1) {
-                memmove(obj + i + 1, obj + i + 2, len - i + 1);
+                strcpy(&obj[last_bckslsh], &obj[i]);
             }
+        case 92 | '\\':
+            last_bckslsh = i;
         }
     }
 }

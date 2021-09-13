@@ -50,6 +50,7 @@ typedef enum {
     TemplateEmpty,
     TemplateNoFields,
     TemplateNotExist,
+    TemplatePageNotExist,
     NoFields
 }pdf_err;
 
@@ -72,7 +73,9 @@ unsigned char * pdf_get_buffer(struct autobuffer *buf);
 
 cairo_status_t pdf_write(void *b, unsigned char const *data, unsigned int len); // PRIVATE
 
-int pdf_render(struct fillpdf *in);
+int pdf_render_page(struct fillpdf *in, int p);
+
+int pdf_get_pages(struct fillpdf * in);
 
 void pdf_close(struct fillpdf *data);
 
