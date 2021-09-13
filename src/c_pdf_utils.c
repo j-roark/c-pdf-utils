@@ -1,5 +1,5 @@
 /*
-cfillpdf
+c-pdf-utils
 Copyright (C) 2021 John B Roark
 
 This program is free software: you can redistribute it and/or modify
@@ -15,7 +15,7 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
-#include "../include/fillpdf.h"
+#include "../include/c_pdf_utils.h"
 
 const char * pdf_err_str(int err_enum) {
     pdf_err err = (pdf_err) err_enum;

@@ -1,5 +1,5 @@
 /*
-cfillpdf
+c-pdf-utils
 Copyright (C) 2021 John B Roark
 
 This program is free software: you can redistribute it and/or modify
@@ -16,8 +16,8 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef FILLPDF_H
-#define FILLPDF_H
+#ifndef C_PDF_UTILS_H
+#define C_PDF_UTILS_H
 
 #include <cairo/cairo-pdf.h>
 #include <stdio.h>
