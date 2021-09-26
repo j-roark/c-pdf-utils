@@ -10,3 +10,8 @@ This library seeks to automate common and repetative PDF related tasks developer
 - Generating and adding barcodes to PDF files -- TODO
 
 It is written in C to allow for easy FFI integration to languages such as Rust, Go, NodeJS, Java, etc..
+
+#### Dependencies
+- Poppler
+- Cairo
+- JSON-C
