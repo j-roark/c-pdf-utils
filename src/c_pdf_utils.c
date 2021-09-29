@@ -1,5 +1,5 @@
 /*
-c-pdf-utils
+cfillpdf
 Copyright (C) 2021 John B Roark
 
 This program is free software: you can redistribute it and/or modify
@@ -124,15 +124,14 @@ int pdf_fill_template_fields(struct fillpdf * fillablepdf) {
     struct json_object * obj;
     int n_maps = 0;
 
-    for (int i = 0; i <= n; i += 1) {
+    for (int i = 0; i < n; i++) {
         PopplerPage * page = poppler_document_get_page(fillablepdf -> template, i);
         pdf_fields = poppler_page_get_form_field_mapping(page);
-
         PopplerFormFieldMapping * fieldmap;
         n_maps = g_list_length(pdf_fields);
 
-        for (int idx = 0; i < n_maps; i += 1) {
-            fieldmap = g_list_nth_data(pdf_fields, i);
+        for (int idx = 0; idx < n_maps; idx++) {
+            fieldmap = g_list_nth_data(pdf_fields, idx);
             if (fieldmap == NULL) {
                 return TemplateNoFields;
             }
